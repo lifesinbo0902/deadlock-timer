@@ -1,0 +1,881 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deadlock イベントタイマー</title>
+<style>
+  /* 配色は Deadlock Wiki の brown テーマ(ダーク)に準拠 */
+  :root {
+    --base: #241c16;
+    --bg-2: #2d241d;      /* 一段明るい面 */
+    --bg-3: #3c3027;
+    --bg-4: #4a3d33;
+    --bg-sub: #1a1410;    /* 一段暗い面 */
+    --border: #6a5a4d;
+    --border-subtle: #4a3d33;
+    --text: #f1e8de;
+    --text-subtle: rgba(241, 232, 222, .62);
+    --accent: #60f8b3;
+    --accent-dim: #2fb97f;
+    --accent-bg: #0f3a28;
+    --warn: #ab7f2a;
+    --danger: #e64835;
+    --danger-bg: #3e0000;
+    --spirit: #E3BDFA;
+  }
+  :root[data-mode="light"] {
+    --base: #f5ede0;
+    --bg-2: #eee4d4;
+    --bg-3: #e5d9c6;
+    --bg-4: #d9ccb6;
+    --bg-sub: #fbf6ec;
+    --border: #a89880;
+    --border-subtle: #cdbfa8;
+    --text: #2a211a;
+    --text-subtle: rgba(42, 33, 26, .62);
+    --accent: #007948;
+    --accent-dim: #00663d;
+    --accent-bg: #d2ecdd;
+    --danger-bg: #fde8e6;
+    --spirit: #7a4fb0;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--base); color: var(--text);
+    font-family: "Segoe UI", "Hiragino Sans", "Yu Gothic UI", Meiryo, sans-serif;
+    line-height: 1.5;
+  }
+  a { color: var(--accent); }
+  header.site {
+    background: var(--bg-sub); border-bottom: 1px solid var(--border-subtle);
+    padding: 10px 20px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  }
+  header.site h1 { font-size: 1.15rem; margin: 0; font-weight: 700; letter-spacing: .02em; }
+  header.site h1 span { color: var(--accent); }
+  header.site .sub { color: var(--text-subtle); font-size: .8rem; }
+  header.site .spacer { flex: 1; }
+  html, body { overflow-x: hidden; }
+  main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 60px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  .card { min-width: 0; background: var(--bg-2); border: 1px solid var(--border-subtle); border-radius: 6px; }
+  .card > h2 {
+    margin: 0; padding: 10px 16px; font-size: 1rem; font-weight: 700;
+    border-bottom: 1px solid var(--border-subtle); color: var(--text);
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  }
+  .card > h2 small { color: var(--text-subtle); font-weight: 400; font-size: .78rem; }
+  .card .body { padding: 14px 16px; }
+
+  /* 時計 */
+  .clock-wrap { display: grid; grid-template-columns: 1fr; gap: 14px; }
+  @media (min-width: 820px) { .clock-wrap { grid-template-columns: 1.1fr 1fr; } }
+  .clock { text-align: center; padding: 8px 0; }
+  .clock .time {
+    font-variant-numeric: tabular-nums; font-size: clamp(3.4rem, 11vw, 6rem);
+    font-weight: 700; letter-spacing: .02em; color: var(--accent);
+    font-family: "Consolas", "SF Mono", "Menlo", monospace;
+  }
+  .clock .state { color: var(--text-subtle); font-size: .85rem; min-height: 1.3em; }
+  .btns { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 10px; }
+  button, .btn {
+    font: inherit; color: var(--text); background: var(--bg-3); border: 1px solid var(--border);
+    border-radius: 4px; padding: 6px 12px; cursor: pointer;
+  }
+  button:hover { background: var(--bg-4); }
+  button.primary { background: var(--accent-bg); border-color: var(--accent-dim); color: var(--accent); font-weight: 700; }
+  button.primary:hover { background: var(--accent-dim); color: #04140d; }
+  button.danger { border-color: var(--danger); color: var(--danger); }
+  button.small { padding: 3px 8px; font-size: .8rem; }
+  .adjust { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; align-items: center; margin-top: 12px; font-size: .85rem; color: var(--text-subtle); }
+  input[type="text"], input[type="number"], select {
+    font: inherit; color: var(--text); background: var(--bg-sub); border: 1px solid var(--border);
+    border-radius: 4px; padding: 4px 8px;
+  }
+  input[type="text"].tin { width: 5.2em; text-align: center; font-variant-numeric: tabular-nums; }
+
+  /* 次のイベント */
+  .next-list { display: grid; gap: 8px; }
+  .next-item {
+    display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center;
+    background: var(--bg-sub); border: 1px solid var(--border-subtle); border-left: 4px solid var(--accent);
+    border-radius: 4px; padding: 8px 12px;
+  }
+  .next-item.soon { border-left-color: var(--warn); background: #33280f; }
+  :root[data-mode="light"] .next-item.soon { background: #f6e6c2; }
+  .next-item.now { border-left-color: var(--danger); background: var(--danger-bg); }
+  .next-item .at { font-family: Consolas, monospace; color: var(--text-subtle); font-variant-numeric: tabular-nums; }
+  .next-item .nm { font-weight: 600; }
+  .next-item .cd { font-family: Consolas, monospace; font-size: 1.25rem; font-variant-numeric: tabular-nums; color: var(--accent); }
+  .next-item.soon .cd { color: #ffcf6b; }
+  :root[data-mode="light"] .next-item.soon .cd { color: #8a5a00; }
+  .next-item.now .cd { color: var(--danger); }
+  .muted { color: var(--text-subtle); }
+
+  /* 設定 */
+  .settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 24px; }
+  .setting { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .setting label.t { flex: 1; }
+  .setting .hint { display: block; color: var(--text-subtle); font-size: .75rem; }
+
+  /* スイッチ */
+  .sw { position: relative; display: inline-block; width: 40px; height: 22px; flex: none; }
+  .sw input { opacity: 0; width: 0; height: 0; }
+  .sw .tr { position: absolute; inset: 0; background: var(--bg-4); border: 1px solid var(--border); border-radius: 22px; transition: .15s; cursor: pointer; }
+  .sw .tr::before { content: ""; position: absolute; width: 16px; height: 16px; left: 2px; top: 2px; background: var(--text-subtle); border-radius: 50%; transition: .15s; }
+  .sw input:checked + .tr { background: var(--accent-bg); border-color: var(--accent-dim); }
+  .sw input:checked + .tr::before { transform: translateX(18px); background: var(--accent); }
+  .sw input:focus-visible + .tr { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* イベント表 (wikitable風) */
+  table.wikitable { width: 100%; border-collapse: collapse; font-size: .92rem; }
+  .wikitable th, .wikitable td { border: 1px solid var(--border-subtle); padding: 7px 10px; vertical-align: top; }
+  .wikitable th { background: var(--bg-3); text-align: left; font-weight: 700; }
+  .wikitable td { background: var(--bg-2); }
+  .wikitable tr.group td { background: var(--bg-sub); font-weight: 700; color: var(--accent); }
+  .wikitable tr.group td.sw-cell { background: var(--bg-sub); }
+  .wikitable tr.group .gcount { color: var(--text-subtle); font-weight: 400; font-size: .8rem; margin-left: 8px; }
+  .wikitable tr.group.goff td .gname { color: var(--text-subtle); }
+  /* 一部だけONのとき(中間状態) */
+  .sw input:indeterminate + .tr { background: var(--accent-bg); border-color: var(--warn); }
+  .sw input:indeterminate + .tr::before { transform: translateX(9px); background: var(--warn); }
+  .wikitable tr.off td { opacity: .5; }
+  .wikitable tr.past td.name, .wikitable tr.past td.when { text-decoration: line-through; text-decoration-color: var(--text-subtle); }
+  .wikitable td.sw-cell { width: 64px; text-align: center; }
+  .wikitable td.when { width: 175px; white-space: nowrap; font-family: Consolas, monospace; font-variant-numeric: tabular-nums; }
+  .wikitable .desc { color: var(--text-subtle); font-size: .8rem; margin-top: 2px; }
+  .tag { display: inline-block; font-size: .7rem; padding: 0 6px; border-radius: 3px; border: 1px solid var(--border); color: var(--text-subtle); margin-left: 6px; }
+  .tag.rec { border-color: var(--spirit); color: var(--spirit); }
+
+  /* 手動タイマー */
+  .manual-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+  .mt-list { display: grid; gap: 6px; }
+  .mt { display: grid; grid-template-columns: 1fr auto auto auto; gap: 10px; align-items: center;
+        background: var(--bg-sub); border: 1px solid var(--border-subtle); border-radius: 4px; padding: 6px 10px; }
+  .mt .cd { font-family: Consolas, monospace; font-variant-numeric: tabular-nums; color: var(--accent); font-size: 1.1rem; }
+
+  /* ログ */
+  .log { max-height: 160px; overflow: auto; font-size: .85rem; display: grid; gap: 3px; }
+  .log div { color: var(--text-subtle); }
+  .log b { color: var(--accent); font-family: Consolas, monospace; font-weight: 600; }
+
+  /* トースト */
+  #toasts { position: fixed; right: 16px; top: 16px; display: grid; gap: 10px; z-index: 50; width: min(380px, calc(100vw - 32px)); }
+  .toast {
+    background: var(--bg-sub); border: 1px solid var(--accent-dim); border-left: 6px solid var(--accent);
+    border-radius: 6px; padding: 12px 14px; box-shadow: 0 6px 24px rgba(0,0,0,.45);
+    animation: slide .2s ease-out;
+  }
+  .toast.pre { border-left-color: var(--warn); border-color: var(--warn); }
+  .toast .tt { font-weight: 700; font-size: 1.05rem; }
+  .toast .ts { color: var(--text-subtle); font-size: .82rem; }
+  @keyframes slide { from { transform: translateX(30px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+  /* 予告の列 */
+  .wikitable th.lead-h, .wikitable td.lead-cell { width: 116px; text-align: center; }
+  .lead-sel { font-size: .8rem; padding: 2px 4px; width: 104px; }
+  .lead-sel.custom { border-color: var(--accent-dim); color: var(--accent); }
+  .wikitable tr.off .lead-sel { opacity: .6; }
+  /* スマホ幅: 表を画面に収める */
+  @media (max-width: 600px) {
+    header.site { padding: 10px 16px; }
+    .card > h2 { padding: 10px 12px; }
+    .card .body { padding: 12px; }
+    .wikitable th, .wikitable td { padding: 6px 6px; }
+    .wikitable td.sw-cell { width: 52px; }
+    .wikitable td.when { width: auto; white-space: normal; font-size: .82rem; }
+    .wikitable td.when .every { display: block; margin-left: 0; }
+    .wikitable th.lead-h, .wikitable td.lead-cell { width: 70px; }
+    .lead-sel { width: 64px; font-size: .75rem; padding: 2px; }
+    .wikitable td.when span { white-space: nowrap; }
+    .settings-grid { grid-template-columns: minmax(0, 1fr); }
+    .mt { grid-template-columns: minmax(0, 1fr) auto auto auto; gap: 8px; }
+  }
+  /* 手動タイマーが試合タイマーの下に移動しているとき */
+  #manualCard.docked { border-color: var(--accent-dim); }
+  .wikitable td.when .every { margin-left: 6px; }
+
+  /* 説明文を隠すモード */
+  body.nodesc .desc,
+  body.nodesc .setting .hint,
+  body.nodesc .card > h2 small,
+  body.nodesc header.site .sub,
+  body.nodesc #mbInfo { display: none; }
+  body.nodesc .wikitable td { padding-top: 5px; padding-bottom: 5px; }
+  details.help { font-size: .85rem; color: var(--text-subtle); }
+  details.help summary { cursor: pointer; color: var(--text); }
+  details.help ul { margin: 8px 0 0 1.2em; padding: 0; }
+  footer { text-align: center; color: var(--text-subtle); font-size: .75rem; padding: 10px; }
+</style>
+</head>
+<body>
+
+<header class="site">
+  <h1><span>Deadlock</span> イベントタイマー</h1>
+  <span class="sub">試合時間に合わせて、マップのイベントを通知します</span>
+  <span class="spacer"></span>
+  <button class="small" id="themeBtn" type="button">ライト/ダーク切替</button>
+</header>
+
+<div id="toasts" aria-live="assertive"></div>
+
+<main>
+
+  <!-- 時計 -->
+  <section class="card" id="timerCard">
+    <h2>試合タイマー <small>試合が始まった瞬間(0:00)に「開始」を押してください</small></h2>
+    <div class="body clock-wrap">
+      <div class="clock">
+        <div class="time" id="clock">0:00</div>
+        <div class="state" id="clockState">停止中</div>
+        <div class="btns">
+          <button class="primary" id="startBtn" type="button">開始</button>
+          <button id="pauseBtn" type="button">一時停止</button>
+          <button class="danger" id="resetBtn" type="button">リセット</button>
+        </div>
+        <div class="adjust">
+          <span>ズレ補正:</span>
+          <button class="small" data-adj="-30" type="button">−30秒</button>
+          <button class="small" data-adj="-5" type="button">−5秒</button>
+          <button class="small" data-adj="5" type="button">+5秒</button>
+          <button class="small" data-adj="30" type="button">+30秒</button>
+          <span>/ 時刻を指定:</span>
+          <input type="text" class="tin" id="jumpIn" placeholder="12:30" inputmode="numeric">
+          <button class="small" id="jumpBtn" type="button">設定</button>
+        </div>
+      </div>
+      <div>
+        <div class="muted" style="margin-bottom:6px;font-size:.85rem;">次のイベント(通知ONのもの)</div>
+        <div class="next-list" id="nextList"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 通知設定 -->
+  <section class="card">
+    <h2>通知の設定</h2>
+    <div class="body settings-grid">
+      <div class="setting">
+        <label class="t" for="mMaster">すべての通知<span class="hint">OFFにすると全イベントが無音になります</span></label>
+        <label class="sw"><input type="checkbox" id="mMaster"><span class="tr"></span></label>
+      </div>
+      <div class="setting">
+        <label class="t" for="mBeep">効果音<span class="hint">ピッという音で知らせます</span></label>
+        <label class="sw"><input type="checkbox" id="mBeep"><span class="tr"></span></label>
+      </div>
+      <div class="setting">
+        <label class="t" for="mVoice">音声読み上げ<span class="hint">「30秒後、ソウルアーン」のように読み上げます</span></label>
+        <label class="sw"><input type="checkbox" id="mVoice"><span class="tr"></span></label>
+      </div>
+      <div class="setting">
+        <label class="t" for="mNotif">ブラウザ通知<span class="hint">別ウィンドウ作業中でも通知(許可が必要)</span></label>
+        <label class="sw"><input type="checkbox" id="mNotif"><span class="tr"></span></label>
+      </div>
+      <div class="setting">
+        <label class="t" for="mPre">事前通知(予告)<span class="hint">イベントの少し前にも知らせます。イベント一覧の予告で、個別に秒数を選んでいない項目はこれに連動します</span></label>
+        <label class="sw"><input type="checkbox" id="mPre"><span class="tr"></span></label>
+      </div>
+      <div class="setting">
+        <label class="t" for="mLead">予告のタイミング(全体)<span class="hint">項目ごとの予告はイベント一覧の「予告」列で変えられます</span></label>
+        <select id="mLead">
+          <option value="10">10秒前</option>
+          <option value="20">20秒前</option>
+          <option value="30">30秒前</option>
+          <option value="45">45秒前</option>
+          <option value="60">60秒前</option>
+        </select>
+      </div>
+      <div class="setting">
+        <label class="t" for="mVol">音量</label>
+        <input type="range" id="mVol" min="0" max="100" step="5">
+      </div>
+      <div class="setting">
+        <label class="t" for="mDesc">説明文を表示<span class="hint">OFFにすると薄い色の説明文を隠してすっきり表示します</span></label>
+        <label class="sw"><input type="checkbox" id="mDesc"><span class="tr"></span></label>
+      </div>
+      <div class="setting">
+        <label class="t">動作テスト</label>
+        <button class="small" id="testBtn" type="button">テスト通知</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- イベント一覧 -->
+  <section class="card">
+    <h2>イベント一覧 <small>スイッチで通知のON/OFF、「予告」列でそのイベントだけの予告タイミングを選べます</small>
+      <span style="flex:1"></span>
+      <button class="small" id="allOn" type="button">すべてON</button>
+      <button class="small" id="allOff" type="button">すべてOFF</button>
+    </h2>
+    <div class="body" style="padding:0;">
+      <table class="wikitable" id="evTable">
+        <thead><tr><th>通知</th><th>時刻</th><th>イベント</th><th class="lead-h">予告</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 手動タイマー(開始中は試合タイマーの下に移動する) -->
+  <div id="manualHome" hidden></div>
+  <section class="card" id="manualCard">
+    <h2>手動タイマー <small>倒した/終わった瞬間にボタンを押すと、再出現までカウントします</small></h2>
+    <div class="body">
+      <div class="manual-row">
+        <button id="mbKill" type="button">ミッドボス撃破</button>
+        <button id="mbRift" type="button">リフト終了</button>
+        <span class="muted" id="mbInfo" style="align-self:center;font-size:.8rem;"></span>
+      </div>
+      <div class="mt-list" id="mtList"></div>
+    </div>
+  </section>
+
+  <!-- ログ -->
+  <section class="card">
+    <h2>通知ログ</h2>
+    <div class="body"><div class="log" id="log"><div class="muted">まだ通知はありません</div></div></div>
+  </section>
+
+  <section class="card">
+    <div class="body">
+      <details class="help">
+        <summary>使い方・注意</summary>
+        <ul>
+          <li>試合が始まった瞬間に「開始」を押します。ズレたら「ズレ補正」や「時刻を指定」で合わせられます(例: 12:30)。</li>
+          <li>ブラウザのタブが裏に回ると動作が重くなることがあります。別ウィンドウに分けて表示しておくと安定します。</li>
+          <li>設定(通知のON/OFFなど)はこのブラウザに自動保存されます。</li>
+          <li>時刻はDeadlock Wikiの記載に基づきます。アップデートで変わることがあります(Wiki側でも「更新が必要」と表示されている項目があります)。</li>
+          <li>リフトは出現が「11:00 ± 1分」と幅があり、2回目以降は「前回終了から7 ± 1分」です。終了時に「リフト終了」ボタンを押すと目安を計測します。</li>
+        </ul>
+      </details>
+    </div>
+  </section>
+</main>
+
+<footer>
+  データ出典: <a href="https://deadlock.wiki/The_Cursed_Apple" target="_blank" rel="noopener">Deadlock Wiki - The Cursed Apple</a>(CC BY-NC-SA)。非公式ツールです。
+</footer>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---------- イベント定義 ----------
+     t: 1回だけの時刻(秒) / every: {start, step} 繰り返し
+     voice: 読み上げ用の日本語 */
+  var EVENTS = [
+    { g: "ジャングル(中立モンスター)" },
+    { id: "easy", name: "弱キャンプ出現", en: "Easy camps", t: [120], voice: "じゃくキャンプ",
+      desc: "「Haunt(ハウント)」はジャングルにいる中立モンスター。倒すとソウル(お金)が手に入る。弱キャンプは2:00から。" },
+    { id: "medium", name: "中キャンプ出現", en: "Medium camps", t: [300], voice: "ちゅうキャンプ",
+      desc: "弱キャンプより強く、報酬も多い。" },
+    { id: "hard", name: "強キャンプ出現", en: "Hard camps", t: [480], voice: "きょうキャンプ",
+      desc: "最も強いキャンプ。報酬が大きい。" },
+    { id: "vault", name: "シナーズ・サクリファイス出現", en: "Sinner's Sacrifice / Vault", t: [480], voice: "サクリファイス",
+      desc: "壊すとソウルと永続ステータスがもらえる装置。時間はかかるが高価値。" },
+
+    { g: "5分ごとに出るもの" },
+    { id: "bridge", name: "ブリッジバフ出現", en: "Bridge buffs / Powerup", every: { start: 300, step: 300 }, voice: "ブリッジバフ",
+      desc: "2つの橋に5分間隔で出る一時バフ(パワーアップ)。どちらのチームも取れる。取り逃すと次の5分で入れ替わる。" },
+    { id: "urn", name: "ソウルアーン降下", en: "Soul Urn", every: { start: 600, step: 300 }, voice: "ソウルアーン",
+      desc: "壺を反対側のレーンまで運ぶと大量のソウルと永続バフが得られる。降下から約12.5秒で着地。" },
+
+    { g: "大きなイベント" },
+    { id: "riftEarly", name: "リフト出現の可能性が出る(最速)", en: "Unstable Rift (earliest)", t: [600], voice: "リフト警戒",
+      desc: "「Unstable Rift」は陣取り(King of the Hill)形式のイベント。初回は11:00±1分の幅があり、10:00が最速。" },
+    { id: "riftMain", name: "リフト出現(目安)", en: "Unstable Rift (11:00 ± 1)", t: [660], voice: "リフト目安",
+      desc: "出現の合図から約40秒で全体アナウンス、さらに20秒後に占領開始。2回目以降は前回終了から7±1分後。" },
+
+    { g: "バフ容器(Buff Container)" },
+    { id: "bc2", name: "バフ容器が強化(ティア2)", en: "Buff Container Tier 2", t: [600], voice: "バフ容器ティア2",
+      desc: "壊すと永続ステータスが得られる容器。時間が経つと得られる量が増える。" },
+    { id: "bc3", name: "バフ容器が強化(ティア3)", en: "Buff Container Tier 3", t: [1800], voice: "バフ容器ティア3",
+      desc: "さらに強化。" },
+
+    { g: "構造物・トルーパー(試合全体の変化)" },
+    { id: "guard", name: "ガーディアンの耐性がなくなる", en: "Guardians lose resistances", t: [720], voice: "ガーディアン最弱",
+      desc: "「Guardian」はレーン最初の防衛タワー。12:00以降は通常ダメージが通りやすくなる。" },
+    { id: "walker", name: "ウォーカーの耐性がなくなる", en: "Walkers lose resistances", t: [1080], voice: "ウォーカー最弱",
+      desc: "「Walker」はガーディアンの次にある大型の防衛ユニット。" },
+    { id: "troop25", name: "トルーパー出現間隔が短縮(25秒)", en: "Troopers: every 25s", t: [1200], voice: "トルーパー加速",
+      desc: "「Trooper」は各レーンに自動で出る雑兵(クリープ)。30秒ごと→25秒ごとに。" },
+    { id: "troop20", name: "トルーパー強化(20秒間隔・HP+50%)", en: "Troopers: every 20s, +50% HP", t: [2100], voice: "トルーパー強化",
+      desc: "出現間隔がさらに短くなり、体力が50%増える。" }
+  ];
+
+  /* 各イベントに所属グループを割り当てる */
+  var GROUPS = [];
+  (function () {
+    var cur = null;
+    EVENTS.forEach(function (e) {
+      if (e.g) { cur = { name: e.g, ids: [] }; e.grp = cur; GROUPS.push(cur); }
+      else if (cur) cur.ids.push(e.id);
+    });
+  })();
+
+  var MAX_T = 90 * 60; // 90分ぶんまで展開
+  var occ = [];        // 展開した全発生
+  EVENTS.forEach(function (e) {
+    if (!e.id) return;
+    if (e.t) e.t.forEach(function (s) { occ.push({ ev: e, t: s, key: e.id + "@" + s }); });
+    if (e.every) for (var s = e.every.start; s <= MAX_T; s += e.every.step) occ.push({ ev: e, t: s, key: e.id + "@" + s });
+  });
+  occ.sort(function (a, b) { return a.t - b.t; });
+
+  /* ---------- 設定の保存 ---------- */
+  var DEFAULTS = { master: true, beep: true, voice: true, notif: false, pre: true, lead: 30, vol: 70, theme: "dark", desc: false, leads: {},
+    off: { medium: true, riftMain: true, bc2: true, bc3: true, troop25: true, troop20: true } };
+  var S = JSON.parse(JSON.stringify(DEFAULTS));
+  function load() {
+    try {
+      var raw = localStorage.getItem("dl-timer-settings");
+      if (raw) { var o = JSON.parse(raw); for (var k in o) S[k] = o[k]; }
+    } catch (e) {}
+    if (!S.off) S.off = {};
+    if (!S.leads) S.leads = {};
+  }
+  function save() { try { localStorage.setItem("dl-timer-settings", JSON.stringify(S)); } catch (e) {} }
+  load();
+
+  /* ---------- 時計の状態 ---------- */
+  var running = false, base = 0, startedAt = 0; // 経過 = base + (now - startedAt)
+  var manual = [];          // {id,label,target,voice,on}
+  var killCount = 0, mtId = 0;
+  var firedPre = {}, firedAt = {};
+
+  function elapsed() { return running ? base + (Date.now() - startedAt) / 1000 : base; }
+  function fmt(sec, forceHM) {
+    sec = Math.max(0, Math.floor(sec));
+    var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+    if (h > 0 || forceHM) return h + ":" + pad(m) + ":" + pad(s);
+    return m + ":" + pad(s);
+  }
+  function pad(n) { return (n < 10 ? "0" : "") + n; }
+  function isOn(id) { return !S.off[id]; }
+  /* 項目ごとの予告秒数。未設定なら全体設定(事前通知OFFなら0=予告なし) */
+  function globalLead() { return S.pre ? S.lead : 0; }
+  function leadFor(id) {
+    var v = id && S.leads[id];
+    return (v === undefined || v === null) ? globalLead() : Number(v);
+  }
+
+  /* 時刻が飛んだとき、既に過ぎたものを通知済みにして鳴らさない */
+  function resync() {
+    var now = elapsed();
+    firedPre = {}; firedAt = {};
+    occ.forEach(function (o) {
+      if (o.t - leadFor(o.ev.id) < now - 0.5) firedPre[o.key] = true;
+      if (o.t < now - 0.5) firedAt[o.key] = true;
+    });
+    manual.forEach(function (m) { m.preDone = m.target - globalLead() < now - 0.5; m.done = m.target < now - 0.5; });
+  }
+
+  /* ---------- 通知 ---------- */
+  var audioCtx = null;
+  function ensureAudio() {
+    try {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === "suspended") audioCtx.resume();
+    } catch (e) {}
+  }
+  function beep(pre) {
+    if (!S.beep || !audioCtx) return;
+    var vol = (S.vol / 100) * 0.35;
+    var freqs = pre ? [660] : [880, 1175];
+    freqs.forEach(function (f, i) {
+      var t0 = audioCtx.currentTime + i * 0.16;
+      var o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.type = "sine"; o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(Math.max(vol, 0.0002), t0 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.28);
+      o.connect(g); g.connect(audioCtx.destination);
+      o.start(t0); o.stop(t0 + 0.3);
+    });
+  }
+  function speak(text) {
+    if (!S.voice || !("speechSynthesis" in window)) return;
+    try {
+      var u = new SpeechSynthesisUtterance(text);
+      u.lang = "ja-JP"; u.volume = S.vol / 100; u.rate = 1.05;
+      window.speechSynthesis.speak(u);
+    } catch (e) {}
+  }
+  function toast(title, sub, pre) {
+    var box = document.getElementById("toasts");
+    var d = document.createElement("div");
+    d.className = "toast" + (pre ? " pre" : "");
+    d.innerHTML = '<div class="tt"></div><div class="ts"></div>';
+    d.firstChild.textContent = title; d.lastChild.textContent = sub;
+    box.appendChild(d);
+    setTimeout(function () { if (d.parentNode) d.parentNode.removeChild(d); }, pre ? 6000 : 9000);
+    while (box.children.length > 4) box.removeChild(box.firstChild);
+  }
+  function osNotify(title, body) {
+    if (!S.notif || !("Notification" in window) || Notification.permission !== "granted") return;
+    try { new Notification(title, { body: body, silent: true }); } catch (e) {}
+  }
+  function addLog(t, text) {
+    var log = document.getElementById("log");
+    if (log.firstChild && log.firstChild.className === "muted") log.innerHTML = "";
+    var d = document.createElement("div");
+    d.innerHTML = "<b></b> <span></span>";
+    d.firstChild.textContent = fmt(t); d.lastChild.textContent = text;
+    log.insertBefore(d, log.firstChild);
+    while (log.children.length > 60) log.removeChild(log.lastChild);
+  }
+  function notify(opts) {
+    // opts: {name, at, pre, voice}
+    var title = opts.pre ? leadText(opts.lead) + "後: " + opts.name : opts.name;
+    var sub = (opts.pre ? "予告 / " : "") + "試合時間 " + fmt(opts.at);
+    toast(title, sub, opts.pre);
+    if (!opts.batched) {
+      beep(opts.pre);
+      speak(opts.pre ? leadText(opts.lead) + "後、" + opts.voice : opts.voice);
+    }
+    osNotify("Deadlock: " + title, sub);
+    addLog(opts.at, title);
+  }
+
+  /* 同じタイミングの通知をまとめて鳴らす。
+     予告は「30秒後、A、B、C」のように時間を最初の1回だけ読み上げる */
+  function leadText(sec) {
+    sec = Number(sec) || 0;
+    if (sec >= 60 && sec % 60 === 0) return (sec / 60) + "分";
+    if (sec > 60) return Math.floor(sec / 60) + "分" + (sec % 60) + "秒";
+    return sec + "秒";
+  }
+  function flush(batch) {
+    if (!batch.length) return;
+    batch.forEach(function (o) { o.batched = true; notify(o); });
+    var groups = [];
+    batch.forEach(function (o) {
+      var g = groups.filter(function (x) { return x.pre === o.pre && x.at === o.at && x.lead === o.lead; })[0];
+      if (!g) { g = { pre: o.pre, at: o.at, lead: o.lead, voices: [] }; groups.push(g); }
+      if (g.voices.indexOf(o.voice) < 0) g.voices.push(o.voice);
+    });
+    groups.sort(function (a, b) { return a.at - b.at || (a.pre === b.pre ? 0 : a.pre ? 1 : -1); });
+    beep(groups.every(function (g) { return g.pre; }));
+    groups.forEach(function (g) {
+      var text = g.voices.join("、");
+      speak(g.pre ? leadText(g.lead) + "後、" + text : text);
+    });
+  }
+
+  /* ---------- メインループ ---------- */
+  function tick() {
+    var now = elapsed();
+    document.getElementById("clock").textContent = fmt(now);
+    if (running && S.master) {
+      var batch = [];
+      occ.forEach(function (o) {
+        if (!isOn(o.ev.id)) return;
+        var ld = leadFor(o.ev.id);
+        if (ld > 0 && !firedPre[o.key] && now >= o.t - ld) {
+          firedPre[o.key] = true;
+          if (now < o.t) batch.push({ name: o.ev.name, at: o.t, pre: true, lead: ld, voice: o.ev.voice });
+        }
+        if (!firedAt[o.key] && now >= o.t) {
+          firedAt[o.key] = true;
+          firedPre[o.key] = true;
+          batch.push({ name: o.ev.name, at: o.t, pre: false, voice: o.ev.voice });
+        }
+      });
+      manual.forEach(function (m) {
+        if (!m.on) return;
+        var mld = globalLead();
+        if (mld > 0 && !m.preDone && now >= m.target - mld) {
+          m.preDone = true;
+          if (now < m.target) batch.push({ name: m.label, at: m.target, pre: true, lead: mld, voice: m.voice });
+        }
+        if (!m.done && now >= m.target) {
+          m.done = true; m.preDone = true;
+          batch.push({ name: m.label, at: m.target, pre: false, voice: m.voice });
+        }
+      });
+      flush(batch);
+    } else if (running) {
+      // マスターOFF中は通知せず通知済み扱いにする
+      occ.forEach(function (o) { if (now >= o.t - leadFor(o.ev.id)) firedPre[o.key] = true; if (now >= o.t) firedAt[o.key] = true; });
+      manual.forEach(function (m) { if (now >= m.target - globalLead()) m.preDone = true; if (now >= m.target) m.done = true; });
+    }
+    renderNext(now);
+    renderTableState(now);
+    renderManual(now);
+  }
+
+  /* ---------- 描画: 次のイベント ---------- */
+  function renderNext(now) {
+    var list = [];
+    occ.forEach(function (o) {
+      if (o.t >= now - 3 && isOn(o.ev.id)) list.push({ name: o.ev.name, t: o.t, lead: leadFor(o.ev.id) });
+    });
+    manual.forEach(function (m) { if (m.target >= now - 3 && m.on) list.push({ name: m.label, t: m.target, lead: globalLead() }); });
+    list.sort(function (a, b) { return a.t - b.t; });
+    list = list.slice(0, 4);
+    var el = document.getElementById("nextList");
+    var html = "";
+    list.forEach(function (x) {
+      var rem = x.t - now;
+      var cls = rem <= 0 ? "now" : (rem <= Math.max(x.lead, 10) ? "soon" : "");
+      html += '<div class="next-item ' + cls + '"><span class="at">' + fmt(x.t) + '</span><span class="nm">' + esc(x.name) +
+              '</span><span class="cd">' + (rem <= 0 ? "今!" : fmt(Math.ceil(rem))) + "</span></div>";
+    });
+    if (!list.length) html = '<div class="muted">通知ONの今後のイベントはありません</div>';
+    if (el._last !== html) { el.innerHTML = html; el._last = html; }
+  }
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+
+  /* ---------- 描画: イベント表 ---------- */
+  var rowMap = {};
+  var LEAD_CHOICES = [5, 10, 15, 20, 30, 45, 60, 90, 120, 180];
+  /* 予告の選択肢。先頭は「全体の設定に従う」で、今の全体設定を括弧で表示 */
+  function fillLeadOptions(sel) {
+    var keep = sel.value;
+    var g = globalLead();
+    /* 先頭(共通設定に従う)は、いまの共通の秒数をそのまま表示する */
+    var gl = g > 0 ? leadText(g) + "前" : "なし";
+    var html = '<option value="g">' + gl + '</option>';
+    if (g > 0 || keep === "0") html += '<option value="0">なし</option>';
+    sel.title = "通知の設定の予告タイミングに連動: " + gl;
+    LEAD_CHOICES.forEach(function (n) {
+      if (n === g && keep !== String(n)) return; // 連動中の秒数と同じ固定値は重複するので出さない
+      html += '<option value="' + n + '">' + leadText(n) + '前</option>';
+    });
+    sel.innerHTML = html;
+    if (keep) sel.value = keep;
+  }
+  function refreshLeadLabels() {
+    document.querySelectorAll(".lead-sel").forEach(fillLeadOptions);
+  }
+  function buildTable() {
+    var tb = document.querySelector("#evTable tbody");
+    tb.innerHTML = "";
+    EVENTS.forEach(function (e) {
+      var tr = document.createElement("tr");
+      if (e.g) {
+        tr.className = "group";
+        tr.innerHTML = '<td class="sw-cell"><label class="sw" title="このグループをまとめて切り替え"><input type="checkbox"><span class="tr"></span></label></td>' +
+                       '<td colspan="3"><span class="gname"></span><span class="gcount"></span></td>';
+        tr.querySelector(".gname").textContent = e.g;
+        var gcb = tr.querySelector("input");
+        gcb.setAttribute("aria-label", e.g + " をまとめて切り替え");
+        gcb.addEventListener("change", function () {
+          e.grp.ids.forEach(function (id) { if (gcb.checked) delete S.off[id]; else S.off[id] = true; });
+          save(); renderTableState(elapsed()); tick();
+        });
+        e.grp.row = tr;
+        tb.appendChild(tr);
+        return;
+      }
+      tr.dataset.id = e.id;
+      var when = e.every ? fmt(e.every.start) + " から" + (e.every.step / 60) + "分ごと" : e.t.map(function (s) { return fmt(s); }).join(" / ");
+      tr.innerHTML =
+        '<td class="sw-cell"><label class="sw"><input type="checkbox"><span class="tr"></span></label></td>' +
+        '<td class="when"></td>' +
+        '<td class="name"><div><strong></strong></div><div class="desc"></div></td>' +
+        '<td class="lead-cell"><select class="lead-sel"></select></td>';
+      tr.querySelector("input").checked = isOn(e.id);
+      if (e.every) {
+        tr.querySelector(".when").innerHTML = '<span></span><span class="every"></span>';
+        tr.querySelector(".when span").textContent = fmt(e.every.start) + "〜";
+        tr.querySelector(".when .every").textContent = (e.every.step / 60) + "分ごと";
+      } else tr.querySelector(".when").textContent = when;
+      tr.querySelector("strong").textContent = e.name;
+      if (e.every) { var tg = document.createElement("span"); tg.className = "tag rec"; tg.textContent = "くり返し"; tr.querySelector("strong").after(tg); }
+      tr.querySelector(".desc").textContent = e.desc;
+      var sel = tr.querySelector(".lead-sel");
+      sel.setAttribute("aria-label", e.name + " の予告タイミング");
+      fillLeadOptions(sel);
+      sel.value = S.leads[e.id] === undefined ? "g" : String(S.leads[e.id]);
+      sel.addEventListener("change", function () {
+        if (sel.value === "g") delete S.leads[e.id]; else S.leads[e.id] = Number(sel.value);
+        sel.classList.toggle("custom", sel.value !== "g");
+        save(); resync(); tick();
+      });
+      sel.classList.toggle("custom", sel.value !== "g");
+      tr.querySelector("input").addEventListener("change", function (ev) {
+        if (ev.target.checked) delete S.off[e.id]; else S.off[e.id] = true;
+        save(); renderTableState(elapsed()); tick();
+      });
+      rowMap[e.id] = tr;
+      tb.appendChild(tr);
+    });
+  }
+  function renderTableState(now) {
+    EVENTS.forEach(function (e) {
+      if (!e.id) return;
+      var tr = rowMap[e.id]; if (!tr) return;
+      var on = isOn(e.id);
+      var past = false;
+      if (e.t) past = e.t[e.t.length - 1] < now - 1;
+      var cls = (on ? "" : "off ") + (past ? "past" : "");
+      if (tr.className !== cls) tr.className = cls;
+      var cb = tr.querySelector("input"); if (cb.checked !== on) cb.checked = on;
+    });
+    GROUPS.forEach(function (g) {
+      if (!g.row) return;
+      var n = g.ids.filter(isOn).length, total = g.ids.length;
+      var gcb = g.row.querySelector("input");
+      gcb.checked = n === total;
+      gcb.indeterminate = n > 0 && n < total;
+      var cnt = g.row.querySelector(".gcount");
+      var txt = " (" + n + "/" + total + " ON)";
+      if (cnt.textContent !== txt) cnt.textContent = txt;
+      var cls = "group" + (n === 0 ? " goff" : "");
+      if (g.row.className !== cls) g.row.className = cls;
+    });
+  }
+
+  /* ---------- 手動タイマー ---------- */
+  function addManual(label, voice, delaySec) {
+    var now = elapsed();
+    manual.push({ id: ++mtId, label: label, voice: voice, target: now + delaySec, on: true, preDone: false, done: false });
+    renderManual(now, true);
+  }
+  function renderManual(now, force) {
+    var el = document.getElementById("mtList");
+    var sig = manual.map(function (m) { return m.id + ":" + m.on; }).join(",");
+    if (force || el._sig !== sig) {
+      el._sig = sig;
+      el.innerHTML = "";
+      if (!manual.length) { el.innerHTML = '<div class="muted" style="font-size:.85rem;">登録されたタイマーはありません</div>'; el._sig = sig; return; }
+      manual.forEach(function (m) {
+        var d = document.createElement("div"); d.className = "mt"; d.dataset.id = m.id;
+        d.innerHTML = '<span class="nm"></span><span class="cd"></span>' +
+          '<label class="sw"><input type="checkbox"><span class="tr"></span></label><button class="small" type="button">削除</button>';
+        d.querySelector(".nm").textContent = m.label + "(" + fmt(m.target) + ")";
+        var cb = d.querySelector("input"); cb.checked = m.on;
+        cb.addEventListener("change", function () { m.on = cb.checked; el._sig = null; });
+        d.querySelector("button").addEventListener("click", function () {
+          manual = manual.filter(function (x) { return x.id !== m.id; }); renderManual(elapsed(), true);
+        });
+        el.appendChild(d);
+      });
+    }
+    manual.forEach(function (m) {
+      var row = el.querySelector('[data-id="' + m.id + '"] .cd');
+      if (row) { var rem = m.target - now; row.textContent = rem <= 0 ? "到達" : fmt(Math.ceil(rem)); }
+    });
+    var next = killCount === 0 ? 7 : (killCount === 1 ? 6 : 5);
+    document.getElementById("mbInfo").textContent = "ミッドボスの次回再出現: 撃破から" + next + "分後(2回目は6分、3回目以降は5分)";
+  }
+
+  /* ---------- 操作 ---------- */
+  /* 手動タイマーの位置: 試合中は試合タイマーの直下、終了(リセット)で元の場所へ */
+  function dockManual(on) {
+    var card = document.getElementById("manualCard");
+    var home = document.getElementById("manualHome");
+    var timer = document.getElementById("timerCard");
+    if (on) { timer.parentNode.insertBefore(card, timer.nextSibling); card.classList.add("docked"); }
+    else { home.parentNode.insertBefore(card, home.nextSibling); card.classList.remove("docked"); }
+  }
+  function start() {
+    ensureAudio();
+    if (running) return;
+    startedAt = Date.now(); running = true; resync(); updateState();
+    dockManual(true);
+  }
+  function pause() { if (!running) return; base = elapsed(); running = false; updateState(); }
+  function reset() {
+    running = false; base = 0; manual = []; killCount = 0;
+    firedPre = {}; firedAt = {}; resync();
+    document.getElementById("log").innerHTML = '<div class="muted">まだ通知はありません</div>';
+    renderManual(0, true); updateState(); tick();
+    dockManual(false);
+  }
+  function setTime(sec) {
+    sec = Math.max(0, sec);
+    if (running) { base = sec; startedAt = Date.now(); } else base = sec;
+    resync(); tick();
+  }
+  function updateState() {
+    document.getElementById("clockState").textContent = running ? "計測中" : (base > 0 ? "一時停止中" : "停止中");
+    document.getElementById("startBtn").textContent = base > 0 && !running ? "再開" : "開始";
+  }
+  function parseTime(str) {
+    str = (str || "").trim(); if (!str) return null;
+    var p = str.split(":").map(Number);
+    if (p.some(function (n) { return isNaN(n) || n < 0; })) return null;
+    if (p.length === 1) return p[0] * 60;
+    if (p.length === 2) return p[0] * 60 + p[1];
+    if (p.length === 3) return p[0] * 3600 + p[1] * 60 + p[2];
+    return null;
+  }
+
+  document.getElementById("startBtn").addEventListener("click", start);
+  document.getElementById("pauseBtn").addEventListener("click", pause);
+  document.getElementById("resetBtn").addEventListener("click", reset);
+  document.querySelectorAll("[data-adj]").forEach(function (b) {
+    b.addEventListener("click", function () { setTime(elapsed() + Number(b.dataset.adj)); });
+  });
+  document.getElementById("jumpBtn").addEventListener("click", function () {
+    var v = parseTime(document.getElementById("jumpIn").value);
+    if (v === null) { toast("時刻の形式が違います", "例: 12:30", true); return; }
+    setTime(v);
+  });
+  document.getElementById("jumpIn").addEventListener("keydown", function (e) { if (e.key === "Enter") document.getElementById("jumpBtn").click(); });
+
+  document.getElementById("mbKill").addEventListener("click", function () {
+    var mins = killCount === 0 ? 7 : (killCount === 1 ? 6 : 5);
+    killCount++;
+    addManual("ミッドボス再出現", "ミッドボス", mins * 60);
+  });
+  document.getElementById("mbRift").addEventListener("click", function () {
+    addManual("リフト再出現の目安(7±1分)", "リフト警戒", 6 * 60);
+  });
+
+  /* 設定UI */
+  function bindCheck(id, key, extra) {
+    var el = document.getElementById(id);
+    el.checked = !!S[key];
+    el.addEventListener("change", function () { S[key] = el.checked; save(); if (extra) extra(el); });
+  }
+  bindCheck("mMaster", "master");
+  bindCheck("mBeep", "beep", function (el) { if (el.checked) { ensureAudio(); beep(false); } });
+  bindCheck("mVoice", "voice", function (el) { if (el.checked) { speak("音声通知をオンにしました"); } });
+  bindCheck("mPre", "pre", function () { resync(); refreshLeadLabels(); });
+  function applyDesc() { document.body.classList.toggle("nodesc", !S.desc); }
+  bindCheck("mDesc", "desc", applyDesc);
+  applyDesc();
+  bindCheck("mNotif", "notif", function (el) {
+    if (el.checked) {
+      if (!("Notification" in window)) { toast("このブラウザはブラウザ通知に未対応です", "", true); el.checked = false; S.notif = false; save(); return; }
+      Notification.requestPermission().then(function (p) {
+        if (p !== "granted") { toast("通知が許可されませんでした", "ブラウザのサイト設定から許可してください", true); el.checked = false; S.notif = false; save(); }
+      });
+    }
+  });
+  var lead = document.getElementById("mLead");
+  lead.value = String(S.lead);
+  lead.addEventListener("change", function () { S.lead = Number(lead.value); save(); resync(); refreshLeadLabels(); });
+  var vol = document.getElementById("mVol");
+  vol.value = S.vol;
+  vol.addEventListener("input", function () { S.vol = Number(vol.value); save(); });
+  document.getElementById("testBtn").addEventListener("click", function () {
+    ensureAudio();
+    notify({ name: "テスト通知", at: elapsed(), pre: false, voice: "テスト通知です" });
+  });
+  document.getElementById("allOn").addEventListener("click", function () { S.off = {}; save(); renderTableState(elapsed()); tick(); });
+  document.getElementById("allOff").addEventListener("click", function () {
+    EVENTS.forEach(function (e) { if (e.id) S.off[e.id] = true; }); save(); renderTableState(elapsed()); tick();
+  });
+
+  /* テーマ */
+  function applyTheme() {
+    if (S.theme === "light") document.documentElement.setAttribute("data-mode", "light");
+    else document.documentElement.removeAttribute("data-mode");
+  }
+  document.getElementById("themeBtn").addEventListener("click", function () {
+    S.theme = S.theme === "light" ? "dark" : "light"; save(); applyTheme();
+  });
+  applyTheme();
+
+  buildTable();
+  resync();
+  updateState();
+  renderManual(0, true);
+  tick();
+  setInterval(tick, 250);
+})();
+</script>
+</body>
+</html>
